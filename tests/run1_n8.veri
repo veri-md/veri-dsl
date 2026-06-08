@@ -1,0 +1,25 @@
+cache_size : nat = 8
+# Error parsing block 2: Unexpected token in type: Token(HASH, '#')
+# Block 2:
+# type cache_entry = {
+  key: nat;
+  value: int;
+  timestamp: nat; // access time,...
+
+# Error parsing block 3: Unexpected token in expression: Token(GREATER, '>')
+# Block 3:
+# val get: cache:valid_lru_cache -> k:nat
+  -> Pure (option (int * valid_lru_cache...
+
+# Error parsing block 4: Unexpected token in expression: Token(GREATER, '>')
+# Block 4:
+# val put: cache:valid_lru_cache -> k:nat -> v:int
+  -> Pure valid_lru_cache
+    (...
+
+# Error parsing block 5: Expected RPAREN(None) at pos 806, got Token(LESS_EQUAL, '<=')
+# Block 5:
+# val evict: cache:valid_lru_cache
+  -> Pure (option (nat * valid_lru_cache))
+    ...
+

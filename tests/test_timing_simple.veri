@@ -1,0 +1,6 @@
+# Error parsing block 1: Unexpected token in type: Token(HASH, '#')
+# Block 1:
+# let rec list_length (#a: Type) (lst: list a) : nat =
+  match lst with
+  | [] -> ...
+

@@ -1,0 +1,34 @@
+module CircularBuffer
+
+buffer_size: nat = 8
+
+class CircularBuffer:
+    data: list[int]
+    head: nat
+    tail: nat
+    count: nat
+
+def is_valid_buffer(buf: CircularBuffer) -> bool:
+    return buf.head < buffer_size and buf.tail < buffer_size and buf.count <= buffer_size and len(buf.data) == buffer_size
+
+type ValidCircularBuffer = CircularBuffer WHERE is_valid_buffer(buf)
+
+def push(buf: ValidCircularBuffer, value: int) -> ValidCircularBuffer:
+    REQUIRES True
+    ENSURES is_valid_buffer(result) and result.count == (buf.count + 1 if buf.count < buffer_size else buffer_size) and (buf.count == buffer_size ==> result.head == (buf.head + 1) % buffer_size)
+
+def pop(buf: ValidCircularBuffer) -> option[(int, ValidCircularBuffer)]:
+    REQUIRES True
+    ENSURES match result:
+        case None:
+            buf.count == 0
+        case Some(v, new_buf):
+            buf.count > 0 and is_valid_buffer(new_buf) and new_buf.count == buf.count - 1 and new_buf.head == (buf.head + 1) % buffer_size
+
+def peek(buf: ValidCircularBuffer) -> option[int]:
+    REQUIRES True
+    ENSURES match result:
+        case None:
+            buf.count == 0
+        case Some(v):
+            buf.count > 0

@@ -1,0 +1,108 @@
+# Complete FCL Test Specification
+# This file exercises EVERY FCL keyword, declaration type, expression, and pattern.
+# Used for backend completeness testing: every construct must roundtrip through
+# both F* and Dafny backends.
+
+TARGET f-star-c
+
+# ── Module ──
+module CompletenessTest
+
+# ── Imports ──
+import FStar.List.Tot
+import FStar.Mul
+
+# ── Constants / Let Bindings ──
+buffer_size: nat = 8
+max_val: int = 100
+
+# ── Type: Abstract ──
+type Key: eqtype
+type Token
+
+# ── Type: Alias ──
+type SortedList = list Element
+
+# ── Type: Refined (WHERE) ──
+type ValidBuffer = CircularBuffer WHERE is_valid_buffer(buf)
+
+# ── Type: Record / class ──
+class Element:
+    serial: nat
+    data: string
+
+class CircularBuffer:
+    data: list[int]
+    head: nat
+    tail: nat
+    count: nat
+
+# ── Type: Enum (unit variants) ──
+enum AntType:
+    NONE
+    PREFILL
+    DECODE
+
+# ── Type: Variant (constructors with payload) ──
+variant Outcome:
+    | Success(result: int, msg: string)
+    | Failure(error: string)
+    | Timeout(duration: int)
+
+# ── Predicate (def with return body) ──
+def is_valid_buffer(buf: CircularBuffer) -> bool:
+    return buf.head < buffer_size and buf.tail < buffer_size and buf.count <= buffer_size
+
+# ── Predicate with existential quantifier ──
+def contains_positive(lst: SortedList) -> bool:
+    return EXISTS x IN lst: x.serial > 0
+
+# ── Match expression — single case, wildcard ──
+def head_or_zero(lst: SortedList) -> int:
+    return match lst:
+        case []:
+            0
+        case [hd, *tl]:
+            hd.serial
+
+# ── Lambda expression ──
+increment: lambda int: int = lambda x: x + 1
+
+# ── Function with REQUIRES / ENSURES ──
+def push(buf: ValidBuffer, value: int) -> ValidBuffer:
+    REQUIRES True
+    ENSURES is_valid_buffer(result) and result.count == buf.count + 1
+
+# ── Function with DECREASES ──
+def recursive_helper(n: int) -> int:
+    REQUIRES n >= 0
+    ENSURES result == n
+    DECREASES n
+
+# ── Function with ternary (A if cond else B) in ENSURES ──
+def clamp(x: int, lo: int, hi: int) -> int:
+    REQUIRES lo <= hi
+    ENSURES result == x if lo <= x and x <= hi else (lo if x < lo else hi)
+
+# ── Imported function ──
+import malloc(size: int) -> int:
+    REQUIRES size > 0
+    ENSURES result != 0
+
+# ── External function ──
+EXTERN memset(ptr: int, value: int, num: int) -> None:
+    REQUIRES num > 0
+    ENSURES True
+
+# ── Lemma with SMTPat ──
+def token_nonnegative(bucket: ValidBuffer) -> Lemma:
+    ENSURES bucket.head >= 0
+    SMTPat(bucket.head)
+
+# ── CONSTRAINTS (invariant blocks) ──
+CONSTRAINT GlobalInvariants:
+    all_buffers_valid
+    FORALL buf IN buffers:
+        is_valid_buffer(buf)
+    EXIST buf IN buffers:
+        buf.count == 0
