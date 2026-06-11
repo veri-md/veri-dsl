@@ -4,7 +4,7 @@ A Pythonic DSL for writing formal contract specifications (pre/post conditions,
 refined types, invariants) that compiles to one of three verification backends:
 
 ```
-Veri DSL (.veri / .veri.md) ──► ┌─ F*    (.fsti / .fst)  ──► C    (via Low*/KaRaMeL)
+Veri DSL (.veri / .veri.md) ──► ┌─ F*    (.fst / .fst)  ──► C    (via Low*/KaRaMeL)
                                 ├─ Dafny (.dfy)           ──► Rust (via Dafny)
                                 └─ Python (.py)           ──► Runtime @contract enforcement
 ```
@@ -18,7 +18,7 @@ compiles to F*, Dafny, or runtime Python contracts for verification.
 You write the spec once; the pipeline targets the backend of your choice.
 
 ```veri
-TARGET f-star-c
+TARGET fstar-c
 
 class TokenBucket:
     capacity: int
@@ -47,7 +47,7 @@ fenced code blocks. The first Veri DSL block must declare the target:
 Target: F* → C via Low*/KaRaMeL
 
 ```veri
-TARGET f-star-c
+TARGET fstar-c
 ```
 
 ## Element type
@@ -80,12 +80,12 @@ block. This tells the pipeline which backend to use:
 
 | Target | Backend | Output |
 |--------|---------|--------|
-| `TARGET f-star-c` | F* → Low* → KaRaMeL | Verified C |
+| `TARGET fstar-c` | F* → Low* → KaRaMeL | Verified C |
 | `TARGET dafny-rust` | Dafny | Verified Rust |
 | `TARGET python-assert` | Python @contract | Runtime assertion enforcement |
 
 ```veri
-TARGET f-star-c       # F* → C via Low* / KaRaMeL
+TARGET fstar-c       # F* → C via Low* / KaRaMeL
 TARGET dafny-rust     # Dafny → Rust
 TARGET python-assert  # Python runtime @contract enforcement
 ```
@@ -94,7 +94,7 @@ TARGET python-assert  # Python runtime @contract enforcement
 
 | Backend | Parser | Printer | Verifier | Output |
 |---------|--------|---------|----------|--------|
-| `fstar` | `backend/fstar/parser.py` | `backend/fstar/printer.py` | `fstar.exe` | `.fsti` / `.fst` → C |
+| `fstar` | `backend/fstar/parser.py` | `backend/fstar/printer.py` | `fstar.exe` | `.fst` / `.fst` → C |
 | `dafny` | `backend/dafny/parser.py` | `backend/dafny/printer.py` | `dafny` | `.dfy` → Rust |
 | `python` | — (uses Veri DSL AST) | `backend/python/conditions.py` | runtime assertions | `_conditions.py` + `@contract` |
 
@@ -102,11 +102,11 @@ Each backend has a parser (backend → Veri DSL AST) and a printer (Veri DSL AST
 → backend), enabling bidirectional conversion:
 
 ```
-Veri DSL  ──► backend/fstar/printer ──►  .fsti
+Veri DSL  ──► backend/fstar/printer ──►  .fst
 Veri DSL  ──► backend/dafny/printer ──►  .dfy
 Veri DSL  ──► backend/python/printer ──►  _conditions.py
 
-.fsti     ──► backend/fstar/parser  ──►  Veri DSL
+.fst     ──► backend/fstar/parser  ──►  Veri DSL
 .dfy      ──► backend/dafny/parser  ──►  Veri DSL
 ```
 
@@ -139,8 +139,8 @@ dsl/
 │   │   ├── base.py              # Abstract backend interface
 │   │   ├── completeness.py      # Completeness checker (all targets covered)
 │   │   ├── fstar/
-│   │   │   ├── parser.py        # F* .fsti → Veri DSL AST
-│   │   │   └── printer.py       # Veri DSL AST → F* .fsti
+│   │   │   ├── parser.py        # F* .fst → Veri DSL AST
+│   │   │   └── printer.py       # Veri DSL AST → F* .fst
 │   │   ├── dafny/
 │   │   │   ├── parser.py        # Dafny .dfy → Veri DSL AST
 │   │   │   └── printer.py       # Veri DSL AST → Dafny .dfy
@@ -163,7 +163,7 @@ PYTHONPATH=src python3 -c "
 from veri_parser import parse_veri
 from veri_printer import VeriDslPrinter
 
-text = 'TARGET f-star-c\n\ndef f(x: int) -> int:\n    REQUIRES x > 0\n    ENSURES x + 1 if x > 0 else x\n'
+text = 'TARGET fstar-c\n\ndef f(x: int) -> int:\n    REQUIRES x > 0\n    ENSURES x + 1 if x > 0 else x\n'
 
 prog = parse_veri(text)
 print(VeriDslPrinter().print(prog))
