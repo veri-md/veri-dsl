@@ -1,9 +1,25 @@
 """
-fsti_printer.py — Pretty-print VeriDslProgram AST to F* .fsti format.
+fsti_printer.py — Pretty-print VeriDslProgram AST to F* .fst format.
 """
 
-from typing import List
+from typing import List, Set
 from veri_ast import *
+
+
+# F* reserved keywords that cannot be used as record field names or identifiers
+_FSTAR_KEYWORDS: Set[str] = {
+    'val', 'let', 'type', 'match', 'fun', 'if', 'then', 'else', 'with',
+    'for', 'function', 'open', 'module', 'when', 'and', 'or', 'in',
+    'true', 'false', 'instance', 'inline_for_extraction', 'effect',
+    'assume', 'noeq', 'new', 'effect', 'kind',
+}
+
+
+def _escape_fstar_name(name: str) -> str:
+    """Escape a name if it conflicts with F* reserved keywords."""
+    if name in _FSTAR_KEYWORDS:
+        return name + '_'
+    return name
 
 
 def _to_fstar_name(name: str) -> str:
@@ -117,12 +133,10 @@ class FStarPrinter:
         self._line(''.join(parts))
 
     def _print_record(self, d: TypeRecord):
-        self._line(f"type {_to_fstar_name(d.name)} = {{")
-        self.indent += 1
-        for f in d.fields:
-            self._line(f"{f.name}: {self._type(f.typ)};")
-        self.indent -= 1
-        self._line("}")
+        # F* 2026.05+ requires `noeq` and does not allow newlines inside { }
+        # Field names are escaped if they conflict with F* reserved keywords
+        fields = "; ".join(f"{_escape_fstar_name(f.name)}: {self._type(f.typ)}" for f in d.fields)
+        self._line(f"noeq type {_to_fstar_name(d.name)} = {{ {fields} }}")
 
     def _print_variant(self, d: TypeVariant):
         self._line(f"type {_to_fstar_name(d.name)} =")
@@ -145,7 +159,12 @@ class FStarPrinter:
         for p in d.params:
             parts.append(f"({p.name}: {self._type(p.typ)})")
         if d.typ:
-            parts.append(f": {self._type(d.typ)}")
+            # F* 2026.05: let rec with pattern matching and comparisons (<= etc.)
+            # requires GTot effect because integer comparisons use GHOST/decode.
+            if d.recursive:
+                parts.append(f": GTot {self._type(d.typ)}")
+            else:
+                parts.append(f": {self._type(d.typ)}")
         if d.body is not None:
             body_str = self._expr(d.body)
             if len(parts) <= 3 and '\n' not in body_str:
@@ -188,6 +207,9 @@ class FStarPrinter:
             self._line(f"  (requires {self._expr(d.contract.requires)})")
         if d.contract.ensures:
             ens = self._expr(d.contract.ensures)
+            # F* 2026: ensures expects prop. Wrap bool expressions with b2t.
+            if ens != 'True' and ens != 'False':
+                ens = f"Prims.b2t ({ens})"
             self._line(f"  (ensures (fun result -> {ens}))")
         if d.contract.decreases:
             self._line(f"  (decreases {self._expr(d.contract.decreases)})")
@@ -209,31 +231,64 @@ class FStarPrinter:
             self._line(f"  (requires {self._expr(d.contract.requires)})")
         if d.contract.ensures:
             ens = self._expr(d.contract.ensures)
+            # F* 2026: ensures expects prop. Wrap bool expressions with b2t.
+            if ens != 'True' and ens != 'False':
+                ens = f"Prims.b2t ({ens})"
             self._line(f"  (ensures (fun result -> {ens}))")
 
     def _print_val(self, d: ValDecl):
-        parts = ["val", f"{_to_fstar_name(d.name)}:"]
+        # In .fst files, val declarations without let definitions must use
+        # `assume val`. Since we now generate .fst files (F* 2026.05+ can't
+        # parse records in .fsti), we use assume for body-less TODO functions.
+        has_let_body = d.body is not None
+        parts = ["assume val" if not has_let_body else "val", f"{_to_fstar_name(d.name)}:"]
         for p in d.params:
             parts.append(f" {p.name}:{self._type(p.typ)} ->")
         has_contract = d.contract.requires is not None or d.contract.ensures is not None
-        eff = d.effect or 'Tot'
-        if has_contract and eff == 'Tot':
-            eff = 'Pure'
         ret = self._type(d.return_type) if d.return_type else 'unit'
-        # Wrap complex return types (AppType, TupleType) in parens for Pure/ST
         if d.return_type and isinstance(d.return_type, (AppType, TupleType, RefinedType)):
             ret = f"({ret})"
-        parts.append(f" {eff} {ret}")
+        if has_contract:
+            # F* 2026: inline Pure syntax: Pure ret (pre) (fun result -> post)
+            pre = self._expr(d.contract.requires) if d.contract.requires else 'True'
+            if pre != 'True' and pre != 'False':
+                pre = f"Prims.b2t ({pre})"
+            pre = f"({pre})"
+            if d.contract.ensures:
+                post = self._expr(d.contract.ensures)
+                if post != 'True' and post != 'False':
+                    post = f"Prims.b2t ({post})"
+            else:
+                post = 'True'
+            parts.append(f" Pure {ret} {pre} (fun result -> {post})")
+        else:
+            parts.append(f" Pure {ret}")
         self._line(' '.join(parts))
-        if d.contract.requires:
-            self._line(f"  (requires {self._expr(d.contract.requires)})")
-        if d.contract.ensures:
-            ens = self._expr(d.contract.ensures)
-            self._line(f"  (ensures (fun result -> {ens}))")
-        if d.contract.decreases:
-            self._line(f"  (decreases {self._expr(d.contract.decreases)})")
-        for pats in d.contract.smt_pats:
-            self._line(f"  [SMTPat ({', '.join(self._expr(p) for p in pats)})]")
+
+        # When the ValDecl has a body (from Veri DSL `def` with implementation),
+        # also emit the corresponding `let` definition so F* has an implementation
+        # to go with the `val` signature.
+        if has_let_body and d.body is not None:
+            body_str = self._expr(d.body)
+            let_parts = ["let"]
+            # Detect self-recursive functions by checking if the body references
+            # the function's own name
+            fn_name_fstar = _to_fstar_name(d.name)
+            if fn_name_fstar in body_str:
+                let_parts.append("rec")
+            let_parts.append(fn_name_fstar)
+            for p in d.params:
+                let_parts.append(f"({p.name}: {self._type(p.typ)})")
+            if d.return_type:
+                let_parts.append(f": {ret}")
+
+            if '\n' in body_str:
+                self._line(' '.join(let_parts) + " =")
+                self.indent += 1
+                self._line(body_str)
+                self.indent -= 1
+            else:
+                self._line(' '.join(let_parts) + f" = {body_str}")
 
     def _type(self, typ: TypeExpr) -> str:
         if isinstance(typ, PrimType):
@@ -241,7 +296,10 @@ class FStarPrinter:
         if isinstance(typ, TypeVar):
             return typ.name
         if isinstance(typ, NamedType):
-            parts = [_to_fstar_name(p) for p in typ.path.parts]
+            parts = typ.path.parts
+            if len(parts) == 1:
+                parts = [_to_fstar_name(p) for p in parts]
+            # Multi-part paths (e.g. FStar.Seq.seq) are module-qualified → keep casing
             return '.'.join(parts)
         if isinstance(typ, AppType):
             if typ.args:
@@ -261,9 +319,10 @@ class FStarPrinter:
     def _expr(self, expr: Expr) -> str:
         if isinstance(expr, Const):
             if expr.value is None: return '()'
-            if isinstance(expr.value, bool): return 'true' if expr.value else 'false'
+            if isinstance(expr.value, bool): return 'True' if expr.value else 'False'
             if isinstance(expr.value, float): return '0'
-            if isinstance(expr.value, str): return f'"{expr.value}"'
+            if isinstance(expr.value, str) and expr.value: return f'"{expr.value}"'
+            if isinstance(expr.value, str): return '""'
             return str(expr.value)
         if isinstance(expr, Var):
             if expr.name == 'None': return 'None'
@@ -302,6 +361,15 @@ class FStarPrinter:
                 # F* 2026.05.17: Prims.op_Star (NOT op_Multiply — that was 2026.04)
                 return f"Prims.op_Star ({self._expr(expr.left)}) ({self._expr(expr.right)})"
             if op == '==':
+                # result == True → just result (True is prop, can't compare with bool)
+                if isinstance(expr.right, Const) and expr.right.value is True:
+                    return self._expr(expr.left)
+                if isinstance(expr.left, Const) and expr.left.value is True:
+                    return self._expr(expr.right)
+                if isinstance(expr.right, Const) and expr.right.value is False:
+                    return f"~{self._expr(expr.left)}"
+                if isinstance(expr.left, Const) and expr.left.value is False:
+                    return f"~{self._expr(expr.right)}"
                 # F* 2026: = returns Prims.logical; op_Equality returns Prims.bool
                 # Parenthesize both sides to handle complex expressions (e.g. len(xs) == 6)
                 return f"Prims.op_Equality ({self._expr(expr.left)}) ({self._expr(expr.right)})"
@@ -360,7 +428,7 @@ class FStarPrinter:
         if isinstance(expr, Len):
             return f"List.Tot.length {self._expr(expr.expr)}"
         if isinstance(expr, ArrayLen):
-            return f"Buffer.length {self._expr(expr.arr)}"
+            return f"FStar.Seq.length {self._expr(expr.arr)}"
         if isinstance(expr, ArrayIndex):
             return f"Seq.index {self._expr(expr.arr)} {self._expr(expr.index)}"
         if isinstance(expr, RecordUpdate):

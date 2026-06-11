@@ -334,6 +334,7 @@ class ValDecl:
     return_type: Optional[TypeExpr] = None
     effect: str = 'Tot'
     contract: PrePost = field(default_factory=PrePost)
+    body: Optional[Expr] = None       # optional implementation body (for functions with contracts + code)
     qualifiers: List[str] = field(default_factory=list)
     smt_pats: List[List[Expr]] = field(default_factory=list)
 

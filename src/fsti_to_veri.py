@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from veri_ast import *
-from fsti_parser import parse_fstar
+from backend.fstar.parser import parse_fstar
 from veri_printer import VeriDslPrinter
 
 

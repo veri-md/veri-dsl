@@ -217,3 +217,21 @@ Contract-specific keywords use SQL-style UPPERCASE to visually separate *what th
 - **Full pipeline**: [`veri-build`](https://github.com/devbali/veri-build) — lint, fill, verify, and compile `.veri.md` specs to output
 - **Python backend docs**: `src/backend/python/README.md`
 - **Pipeline API**: [`veri-build/docs/API.md`](https://github.com/devbali/veri-build/blob/main/docs/API.md)
+
+## Versioning
+
+The Veri DSL language version is declared in [`VERSION`](src/VERSION)
+(currently **0.0.1**). Specs may optionally declare their version:
+
+```veri
+VERI_VERSION 0.0.1
+```
+
+The lint step checks that the spec's `VERI_VERSION` matches the DSL
+version. Every commit that changes the Veri DSL language should update
+`VERSION` and create a corresponding git tag:
+
+```bash
+git tag v$(cat VERSION)
+git push --tags
+```

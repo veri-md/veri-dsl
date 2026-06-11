@@ -5,9 +5,14 @@ Supports the Python+SQL hybrid grammar defined in docs/dsl-grammar-v0.2.md.
 """
 
 import re
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 from veri_ast import *
 
+# Global field type registry shared across parser instances.
+# merge_programs calls parse_veri once per block; without this, field types
+# from class blocks are lost when function blocks are parsed, and FORALL
+# binder types cannot be resolved.
+_global_field_types: Dict[str, Dict[str, TypeExpr]] = {}
 
 class VeriTokenizer:
     def __init__(self, text: str):
@@ -22,7 +27,7 @@ class VeriTokenizer:
         ('INT',       r'\d+'),
         ('STRING',    r'"[^"]*"'),
         ('KEYWORD',   r'\b(module|import|EXTERN|class|enum|variant|type|def|return|'
-                      r'match|case|if|else|for|in|range|lambda|'
+                      r'match|case|if|elif|else|in|lambda|'
                       r'REQUIRES|ENSURES|DECREASES|WHERE|CONSTRAINT|'
                       r'FORALL|EXISTS|IN|PURE|GHOST|LEMMA|'
                       r'STATE_READ_ONLY|STATE_WRITE_ONLY|STATE_READ_WRITE|'
@@ -94,13 +99,15 @@ class VeriTokenizer:
             self.tokens.append(self.Token(kind, val, m.start()))
         self.tokens.append(self.Token('EOF', '', len(self.text)))
 
-
 class VeriDslParser:
     """Parse Veri DSL text into VeriDslProgram AST."""
 
     def __init__(self, text: str):
         self.tok = VeriTokenizer(text)
         self.program = VeriDslProgram()
+        self._field_types: dict[str, dict[str, TypeExpr]] = {}
+        self._param_types: dict[str, TypeExpr] = {}
+        self._quant_binders: dict[str, TypeExpr] = {}
 
     def parse(self) -> VeriDslProgram:
         while self.tok.tokens[0].kind != 'EOF':
@@ -260,6 +267,7 @@ class VeriDslParser:
             self._expect('COLON')
             ftype = self._parse_type()
             fields.append(Binder(name=fname, typ=ftype))
+            self._record_field_type(name, fname, ftype)
         return TypeRecord(name=name, fields=fields)
 
     def _parse_enum(self) -> TypeVariant:
@@ -353,6 +361,8 @@ class VeriDslParser:
         name = self._next().value
         params = []
         _def_name = name  # save for recursive detection
+        # Reset param types for this function
+        self._param_types = {}
         if self._skip('LPAREN'):
             while self._peek().kind != 'RPAREN':
                 pname = self._next().value
@@ -363,17 +373,18 @@ class VeriDslParser:
                 ):
                     dir = self._next().value
                 ptype = self._parse_type()
+                self._param_types[pname] = ptype
                 if self._peek().kind == 'LBRACKET':
                     self._next()
                     array = True
                     if self._peek().kind == 'RBRACKET':
                         self._expect('RBRACKET')
-                        ptype = AppType(NamedType(QualifiedIdent(['Buffer', 'buffer'])), [ptype])
+                        ptype = AppType(NamedType(QualifiedIdent(['FStar', 'Seq', 'seq'])), [ptype])
                     else:
                         # T[n] = array of T with length n
                         self._parse_expr()  # skip size
                         self._expect('RBRACKET')
-                        ptype = AppType(NamedType(QualifiedIdent(['Buffer', 'buffer'])), [ptype])
+                        ptype = AppType(NamedType(QualifiedIdent(['FStar', 'Seq', 'seq'])), [ptype])
                 params.append(Binder(name=pname, typ=ptype, direction=dir))
                 if self._skip('COMMA'): continue
             self._expect('RPAREN')
@@ -388,6 +399,10 @@ class VeriDslParser:
                 self.tok.tokens.insert(0, VeriTokenizer.Token('IDENT', ret_name, 0))
                 ret = self._parse_type()
 
+        # Record returning type as `result` so FORALL u IN result.users can resolve
+        if ret is not None:
+            self._param_types['result'] = ret
+
         self._expect('COLON')
 
         req = None
@@ -395,19 +410,34 @@ class VeriDslParser:
         dec = None
         while self._peek().kind == 'KEYWORD' and self._peek().value in ('REQUIRES', 'ENSURES', 'DECREASES'):
             kw = self._next().value
-            expr = self._parse_expr()
+            # Use _parse_or() instead of _parse_expr() so trailing `if` on the next
+            # line isn't accidentally consumed as a ternary expression.
+            expr = self._parse_or()
             if kw == 'REQUIRES': req = expr
             elif kw == 'ENSURES': ens = expr
             elif kw == 'DECREASES': dec = expr
 
+        # Consume optional body expression (present for functions with contracts + body,
+        # or for pure implementation functions). Do this BEFORE creating ValDecl/LetDecl
+        # so the token stream is consumed cleanly.
+        body = None
+        if self._peek().kind != 'EOF' and self._peek().kind != 'KEYWORD':
+            # Expression starts with non-keyword (IDENT, INT, etc.)
+            body = self._parse_expr()
+        elif self._peek().kind == 'KEYWORD' and self._peek().value in ('return', 'if', 'match'):
+            kw = self._peek().value
+            if kw == 'return':
+                self._next()
+                body = self._parse_expr()
+            elif kw in ('if', 'match'):
+                body = self._parse_expr()
+
         if req is not None or ens is not None:
             return ValDecl(
                 name=name, params=params, return_type=ret,
-                contract=PrePost(requires=req, ensures=ens, decreases=dec))
+                contract=PrePost(requires=req, ensures=ens, decreases=dec),
+                body=body)
         else:
-            body = None
-            if self._skip('KEYWORD', 'return'):
-                body = self._parse_expr()
             # Detect recursion: check if body references the function name
             is_rec = body is not None and len(params) > 0 and self._has_name_ref(body, _def_name)
             return LetDecl(name=name, params=params, typ=ret, body=body, recursive=is_rec)
@@ -437,7 +467,7 @@ class VeriDslParser:
                 if self._peek().kind == 'RBRACKET':
                     # T[] → Buffer.buffer T
                     self._next()
-                    return AppType(func=NamedType(QualifiedIdent(['Buffer', 'buffer'])), args=[PrimType(name)])
+                    return AppType(func=NamedType(QualifiedIdent(['FStar', 'Seq', 'seq'])), args=[PrimType(name)])
                 arg = self._parse_type()
                 self._expect('RBRACKET')
                 return AppType(func=NamedType(QualifiedIdent([name])), args=[arg])
@@ -459,7 +489,7 @@ class VeriDslParser:
                 if self._peek().kind == 'RBRACKET':
                     # T[] → Buffer.buffer T
                     self._next()
-                    return AppType(func=NamedType(QualifiedIdent(['Buffer', 'buffer'])), args=[typ])
+                    return AppType(func=NamedType(QualifiedIdent(['FStar', 'Seq', 'seq'])), args=[typ])
                 arg = self._parse_type()
                 self._expect('RBRACKET')
                 return AppType(func=typ, args=[arg])
@@ -487,8 +517,48 @@ class VeriDslParser:
         return self._parse_ifexpr()
 
     def _parse_ifexpr(self) -> Expr:
+        """Parse if-expression: leading form `if cond: A elif cond: B else: C`
+        or ternary form `A if cond else B`."""
+        # Leading if: `if cond: then_expr elif cond: then_expr else: then_expr`
+        if self._peek().kind == 'KEYWORD' and self._peek().value == 'if':
+            self._next()
+            cond = self._parse_expr()
+            self._skip('COLON')
+            if self._peek().kind == 'KEYWORD' and self._peek().value == 'return':
+                self._next()
+            then_e = self._parse_expr()
+            # Handle elif chain
+            while self._peek().kind == 'KEYWORD' and self._peek().value == 'elif':
+                self._next()
+                elif_cond = self._parse_expr()
+                self._skip('COLON')
+                if self._peek().kind == 'KEYWORD' and self._peek().value == 'return':
+                    self._next()
+                elif_then = self._parse_expr()
+                # Check for trailing else after this elif
+                if self._peek().kind == 'KEYWORD' and self._peek().value == 'else':
+                    self._next()
+                    self._skip('COLON')
+                    if self._peek().kind == 'KEYWORD' and self._peek().value == 'return':
+                        self._next()
+                    else_e = self._parse_ifexpr()
+                    return IfExpr(cond=cond, then_expr=then_e,
+                                  else_expr=IfExpr(cond=elif_cond, then_expr=elif_then, else_expr=else_e))
+                # elif without else: the elif's else is None
+                return IfExpr(cond=cond, then_expr=then_e,
+                              else_expr=IfExpr(cond=elif_cond, then_expr=elif_then, else_expr=Constant('None')))
+            # else on the original if
+            if self._peek().kind == 'KEYWORD' and self._peek().value == 'else':
+                self._next()
+                self._skip('COLON')
+                if self._peek().kind == 'KEYWORD' and self._peek().value == 'return':
+                    self._next()
+                else_e = self._parse_ifexpr()
+                return IfExpr(cond=cond, then_expr=then_e, else_expr=else_e)
+            return IfExpr(cond=cond, then_expr=then_e, else_expr=Constant('None'))
+
+        # Ternary form: `A if cond else B`
         left = self._parse_or()
-        # Handle inline Python-style: `A if B else C`
         if self._peek().kind == 'KEYWORD' and self._peek().value == 'if':
             self._next()
             cond = self._parse_expr()
@@ -637,11 +707,14 @@ class VeriDslParser:
             return expr
         if t.kind == 'IDENT' or t.kind == 'QIDENT':
             name = self._next().value
-            parts = [name]
-            while self._peek().kind == 'DOT':
-                self._next()
-                n = self._next().value
-                parts.append(n)
+            if t.kind == 'QIDENT':
+                parts = name.split('.')
+            else:
+                parts = [name]
+                while self._peek().kind == 'DOT':
+                    self._next()
+                    n = self._next().value
+                    parts.append(n)
             base = QualifiedVar(QualifiedIdent(parts)) if len(parts) > 1 else Var(parts[0])
             if self._peek().kind == 'LPAREN':
                 self._next()
@@ -795,12 +868,83 @@ class VeriDslParser:
         self._expect('KEYWORD', 'IN')
         range_expr = self._parse_expr()
         self._expect('COLON')
+
+        # Resolve the binder type BEFORE parsing the body, so that nested
+        # quantifiers (FORALL r IN u.requests) can look up the outer binder's type.
+        binder_typ: Optional[TypeExpr] = None
+        if isinstance(range_expr, FieldAccess):
+            collection = self._resolve_field_type(range_expr)
+            if collection is not None and isinstance(collection, AppType) and collection.args:
+                binder_typ = collection.args[0]
+        elif isinstance(range_expr, Var):
+            param_typ = self._param_types.get(range_expr.name)
+            if param_typ is not None and isinstance(param_typ, AppType) and param_typ.args:
+                binder_typ = param_typ.args[0]
+        elif isinstance(range_expr, QualifiedVar):
+            parts = range_expr.path.parts
+            if len(parts) >= 2:
+                base_typ = self._param_types.get(parts[0]) or self._quant_binders.get(parts[0])
+                if base_typ is not None:
+                    base_name = self._type_to_name(base_typ)
+                    if base_name is not None:
+                        field_map = _global_field_types.get(base_name, {}) or self._field_types.get(base_name, {})
+                        field_typ = field_map.get(parts[1])
+                        if field_typ is not None and isinstance(field_typ, AppType) and field_typ.args:
+                            binder_typ = field_typ.args[0]
+
+        # Save resolved binder type BEFORE parsing body (inner foralls need it)
+        b = Binder(name=ident, typ=binder_typ or TypeVar('_'))
+        if binder_typ is not None:
+            old_val = self._quant_binders.get(ident)
+            self._quant_binders[ident] = binder_typ
+
         body = self._parse_expr()
-        b = Binder(name=ident, typ=TypeVar('_'))
+
+        # Restore previous quantifier binder if we overwrote
+        if binder_typ is not None and old_val is None:
+            del self._quant_binders[ident]
+        elif binder_typ is not None and old_val is not None:
+            self._quant_binders[ident] = old_val
+
         if is_forall:
             return Forall(binders=[b], body=body)
         return Exists(binders=[b], body=body)
 
+    def _record_field_type(self, class_name: str, field_name: str, field_type: TypeExpr) -> None:
+        if class_name not in self._field_types:
+            self._field_types[class_name] = {}
+        self._field_types[class_name][field_name] = field_type
+        # Also persist to global registry (shared across block parses)
+        if class_name not in _global_field_types:
+            _global_field_types[class_name] = {}
+        _global_field_types[class_name][field_name] = field_type
+
+    def _resolve_field_type(self, access: FieldAccess) -> Optional[TypeExpr]:
+        base_type = None
+        if isinstance(access.expr, Var):
+            base_type = self._param_types.get(access.expr.name) or self._quant_binders.get(access.expr.name)
+        elif isinstance(access.expr, QualifiedVar):
+            # e.g. result.users where result is a param → look up users in result's type
+            parts = access.expr.path.parts
+            if parts and parts[0] in self._param_types:
+                base_type = self._param_types[parts[0]]
+        elif isinstance(access.expr, FieldAccess):
+            base_type = self._resolve_field_type(access.expr)
+        if base_type is None:
+            return None
+        base_name = self._type_to_name(base_type)
+        if base_name is None:
+            return None
+        field_map = _global_field_types.get(base_name, {}) or self._field_types.get(base_name, {})
+        return field_map.get(access.field)
+
+    @staticmethod
+    def _type_to_name(typ: TypeExpr) -> Optional[str]:
+        if isinstance(typ, NamedType):
+            return typ.path.parts[0] if typ.path.parts else None
+        if isinstance(typ, PrimType):
+            return typ.name
+        return None
 
 def parse_veri(text: str) -> VeriDslProgram:
     return VeriDslParser(text).parse()

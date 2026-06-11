@@ -167,7 +167,7 @@ class DafnyPrinter:
             params_str = ', '.join(f"{p.name}: {self._type(p.typ)}" for p in d.params)
             ret = f": {self._type(d.typ)}" if d.typ else ""
             body_str = self._expr(d.body)
-            self._line(f"function method {d.name}({params_str}){ret}")
+            self._line(f"function {d.name}({params_str}){ret}")
             self._line("{")
             self.indent += 1
             self._line(body_str)
@@ -212,9 +212,9 @@ class DafnyPrinter:
         if d.return_type:
             ret = self._type(d.return_type)
             if has_contract:
-                self._line(f"function method {d.name}({params_str}): {ret}")
+                self._line(f"function {d.name}({params_str}): {ret}")
             else:
-                self._line(f"function method {d.name}({params_str}): {ret}")
+                self._line(f"function {d.name}({params_str}): {ret}")
         else:
             self._line(f"method {d.name}({params_str})")
         if d.contract.requires:
@@ -224,6 +224,12 @@ class DafnyPrinter:
             self._line(f"  ensures {ens}")
         if d.contract.decreases:
             self._line(f"  decreases {self._expr(d.contract.decreases)}")
+        if d.body is not None:
+            self._line("{")
+            self.indent += 1
+            self._line(self._expr(d.body))
+            self.indent -= 1
+            self._line("}")
 
     def _type(self, typ: TypeExpr) -> str:
         if isinstance(typ, PrimType):

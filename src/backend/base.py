@@ -74,12 +74,12 @@ _ALL_PATTERN_TYPES: FrozenSet[Type[Pattern]] = frozenset({
 _ALL_KEYWORDS: FrozenSet[str] = frozenset({
     # Declarations
     'module', 'import', 'class', 'enum', 'variant',
-    'type', 'def', 'CONSTRAINT', 'TARGET', 'EXTERN',
+    'type', 'def', 'CONSTRAINT', 'TARGET', 'VERI_VERSION', 'EXTERN',
     # Contracts
     'REQUIRES', 'ENSURES', 'DECREASES', 'WHERE',
     # Expressions
     'FORALL', 'EXISTS', 'IN', 'match', 'case',
-    'lambda', 'if', 'else', 'True', 'False', 'None', 'Some',
+    'lambda', 'if', 'elif', 'else', 'True', 'False', 'None', 'Some',
     'and', 'or', 'not', 'len', 'array_len',
     'STATE_READ_ONLY', 'STATE_WRITE_ONLY', 'STATE_READ_WRITE',
     'PURE', 'GHOST', 'LEMMA',
