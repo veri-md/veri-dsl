@@ -221,15 +221,19 @@ Contract-specific keywords use SQL-style UPPERCASE to visually separate *what th
 ## Versioning
 
 The Veri DSL language version is declared in [`VERSION`](src/VERSION)
-(currently **0.0.1**). Specs may optionally declare their version:
+Specs must declare their version in the first
+Veri DSL block:
 
 ```veri
-VERI_VERSION 0.0.1
+VERI_VERSION 0.0.2
 ```
 
-The lint step checks that the spec's `VERI_VERSION` matches the DSL
-version. Every commit that changes the Veri DSL language should update
-`VERSION` and create a corresponding git tag:
+The pipeline checks version compatibility using **major.minor** only:
+- `0.0.1` and `0.0.2` are compatible (same `0.0.x` — backwards compatible)
+- `0.1.0` is **not** compatible with `0.0.x` (different minor)
+- A `VERI_VERSION` declaration is **required** — lint will error if missing
+
+should update `VERSION` and create a corresponding git tag:
 
 ```bash
 git tag v$(cat VERSION)
