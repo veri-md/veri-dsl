@@ -399,6 +399,37 @@ def test_veri_to_dafny_val_with_decreases():
     dafny = DafnyPrinter().print(prog)
     assert_contains(dafny, "decreases")
 
+def test_veri_to_dafny_ensures_binds_result():
+    """ENSURES referring to `result` must name the return value in the signature.
+
+    Dafny only puts `result` in scope if the signature declares it as
+    `function f(...): (result: T)`. When a postcondition mentions `result`,
+    the printer must emit the named-return form so the identifier resolves —
+    otherwise Dafny errors with 'unresolved identifier: result'.
+    Regression test for the fix-dafny-result-naming change.
+    """
+    veri = """def f(x: int) -> int:
+    REQUIRES x > 0
+    ENSURES result == x + 1
+"""
+    prog = parse_veri(veri)
+    dafny = DafnyPrinter().print(prog)
+    # Return value bound to `result`, so the `ensures result == ...` resolves.
+    assert_contains(dafny, "(result: int)", "ensures result == x + 1")
+
+def test_veri_to_dafny_ensures_without_result_unnamed():
+    """A postcondition that never mentions `result` leaves the return unnamed.
+
+    The named-return form is emitted only when needed, so functions whose
+    ENSURES does not reference `result` keep the plain `: T` return type.
+    """
+    veri = """def g(x: int) -> int:
+    ENSURES x > 0
+"""
+    prog = parse_veri(veri)
+    dafny = DafnyPrinter().print(prog)
+    assert "(result:" not in dafny, f"unexpected named return in:\n{dafny}"
+
 def test_veri_to_dafny_import():
     """Import should map to Dafny import opened."""
     veri = """import FStar.List.Tot\n"""
@@ -752,6 +783,8 @@ def main():
         test("let function", test_veri_to_dafny_let_function)
         test("val with REQUIRES/ENSURES", test_veri_to_dafny_val)
         test("val with DECREASES", test_veri_to_dafny_val_with_decreases)
+        test("ENSURES binds result in signature", test_veri_to_dafny_ensures_binds_result)
+        test("ENSURES without result stays unnamed", test_veri_to_dafny_ensures_without_result_unnamed)
         test("import", test_veri_to_dafny_import)
         test("FORALL quantifier", test_veri_to_dafny_forall)
         test("EXISTS quantifier", test_veri_to_dafny_exists)

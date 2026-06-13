@@ -2,6 +2,7 @@
 dafny_printer.py — Pretty-print VeriDslProgram AST to Dafny syntax.
 """
 
+import re
 from typing import List
 from veri_ast import *
 
@@ -152,6 +153,18 @@ class DafnyPrinter:
                 self._line(f"{prefix}{c.name}")
         self.indent -= 1
 
+    def _named_return(self, ret: str, ensures_str) -> str:
+        """Bind the return value to `result` when a postcondition refers to it.
+
+        The Veri DSL reserves `result` to name a function's return value inside
+        ENSURES, but Dafny only puts that name in scope if the signature
+        declares it: `function f(...): (result: T)`. When the lowered ensures
+        mentions `result`, emit the named form so the identifier resolves.
+        """
+        if ensures_str is not None and re.search(r'\bresult\b', ensures_str):
+            return f"(result: {ret})"
+        return ret
+
     def _print_let(self, d: LetDecl):
         if d.body is not None:
             if not d.params:
@@ -192,35 +205,30 @@ class DafnyPrinter:
             requires ... ensures ...
         """
         params_str = ', '.join(f"{p.name}: {self._type(p.typ)}" for p in d.params)
-        has_contract = d.contract.requires is not None or d.contract.ensures is not None
+        ens = self._expr(d.contract.ensures) if d.contract.ensures is not None else None
         if d.return_type:
-            ret = self._type(d.return_type)
+            ret = self._named_return(self._type(d.return_type), ens)
             self._line(f"function {keyword} {d.name}({params_str}): {ret}")
         else:
             self._line(f"method {keyword} {d.name}({params_str})")
         if d.contract.requires:
             self._line(f"  requires {self._expr(d.contract.requires)}")
-        if d.contract.ensures:
-            ens = self._expr(d.contract.ensures)
+        if ens is not None:
             self._line(f"  ensures {ens}")
         if d.contract.decreases:
             self._line(f"  decreases {self._expr(d.contract.decreases)}")
 
     def _print_val(self, d: ValDecl):
         params_str = ', '.join(f"{p.name}: {self._type(p.typ)}" for p in d.params)
-        has_contract = d.contract.requires is not None or d.contract.ensures is not None
+        ens = self._expr(d.contract.ensures) if d.contract.ensures is not None else None
         if d.return_type:
-            ret = self._type(d.return_type)
-            if has_contract:
-                self._line(f"function {d.name}({params_str}): {ret}")
-            else:
-                self._line(f"function {d.name}({params_str}): {ret}")
+            ret = self._named_return(self._type(d.return_type), ens)
+            self._line(f"function {d.name}({params_str}): {ret}")
         else:
             self._line(f"method {d.name}({params_str})")
         if d.contract.requires:
             self._line(f"  requires {self._expr(d.contract.requires)}")
-        if d.contract.ensures:
-            ens = self._expr(d.contract.ensures)
+        if ens is not None:
             self._line(f"  ensures {ens}")
         if d.contract.decreases:
             self._line(f"  decreases {self._expr(d.contract.decreases)}")
