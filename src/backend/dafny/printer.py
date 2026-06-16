@@ -145,7 +145,7 @@ class DafnyPrinter:
         self._line(f"datatype {d.name} =")
         self.indent += 1
         for i, c in enumerate(d.constructors):
-            prefix = "  "
+            prefix = "| "
             if c.args:
                 arg_strs = [f"{a.name}: {self._type(a.typ)}" for a in c.args]
                 self._line(f"{prefix}{c.name}({', '.join(arg_strs)})")
