@@ -277,6 +277,25 @@ class DafnyPrinter:
             return f"seq<{self._type(typ.elem)}>"
         return str(typ)
 
+    # Dafny operator precedence (higher = binds tighter)
+    _PREC = {
+        '==>': 0, '<==': 0,
+        'or':  1, '||':  1,
+        'and': 2, '&&':  2,
+        '<=': 3, 'LE': 3, '>=': 3, 'GE': 3,
+        '<':  3, 'LT': 3, '>':  3, 'GT': 3,
+        '==': 3, '=': 3, '!=': 3,
+        '+':  4, '-': 4,
+        '*':  5, '/': 5,
+    }
+
+    def _paren_expr(self, expr: Expr, parent_op: str) -> str:
+        s = self._expr(expr)
+        if isinstance(expr, BinOp):
+            if self._PREC.get(expr.op, 10) < self._PREC.get(parent_op, 10):
+                return f'({s})'
+        return s
+
     def _expr(self, expr: Expr) -> str:
         if isinstance(expr, Const):
             if expr.value is None:
@@ -338,7 +357,7 @@ class DafnyPrinter:
                 op_str = '>'
             else:
                 op_str = op
-            return f"{self._expr(expr.left)} {op_str} {self._expr(expr.right)}"
+            return f"{self._paren_expr(expr.left, op)} {op_str} {self._paren_expr(expr.right, op)}"
         if isinstance(expr, UnaryOp):
             op = expr.op
             if op == 'not':
