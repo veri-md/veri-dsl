@@ -906,9 +906,17 @@ class VeriDslParser:
         elif binder_typ is not None and old_val is not None:
             self._quant_binders[ident] = old_val
 
+        # Fold the `IN <range>` bound into the body so the quantifier is
+        # range-bounded, not type-bounded:
+        #   FORALL x IN s: body  ->  forall x :: x in s ==> body
+        #   EXISTS x IN s: body  ->  exists x :: x in s && body
+        # Dropping the bound was both a soundness bug (quantifying over the whole
+        # type instead of the set) and made the quantifier uncompilable in
+        # non-ghost functions.
+        membership = BinOp('in', Var(ident), range_expr)
         if is_forall:
-            return Forall(binders=[b], body=body)
-        return Exists(binders=[b], body=body)
+            return Forall(binders=[b], body=BinOp('==>', membership, body))
+        return Exists(binders=[b], body=BinOp('and', membership, body))
 
     def _record_field_type(self, class_name: str, field_name: str, field_type: TypeExpr) -> None:
         if class_name not in self._field_types:

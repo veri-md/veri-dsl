@@ -438,24 +438,34 @@ def test_veri_to_dafny_import():
     assert_contains(dafny, "import opened")
 
 def test_veri_to_dafny_forall():
-    """FORALL should map to Dafny forall."""
+    """FORALL should map to a range-bounded Dafny forall.
+
+    Regression: the `IN xs` bound used to be dropped, lowering to a
+    type-bounded `forall x: int :: x > 0` — which quantifies over the whole
+    type instead of the set (a soundness bug) and is uncompilable in non-ghost
+    functions. The bound must be folded in as `x in xs ==> ...`.
+    """
     veri = """module Test
 def all_pos(xs: list[int]) -> bool:
     return FORALL x IN xs: x > 0
 """
     prog = parse_veri(veri)
     dafny = DafnyPrinter().print(prog)
-    assert_contains(dafny, "forall")
+    assert_contains(dafny, "forall", "x in xs", "==>")
 
 def test_veri_to_dafny_exists():
-    """EXISTS should map to Dafny exists."""
+    """EXISTS should map to a range-bounded Dafny exists.
+
+    Regression (mirror of FORALL): the `IN xs` bound must be folded in as
+    `x in xs && ...`, not dropped to a type-bounded `exists x: int :: ...`.
+    """
     veri = """module Test
 def has_pos(xs: list[int]) -> bool:
     return EXISTS x IN xs: x > 0
 """
     prog = parse_veri(veri)
     dafny = DafnyPrinter().print(prog)
-    assert_contains(dafny, "exists")
+    assert_contains(dafny, "exists", "x in xs", "&&")
 
 def test_veri_to_dafny_match():
     """Match should map to Dafny match."""
