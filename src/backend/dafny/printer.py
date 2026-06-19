@@ -221,7 +221,13 @@ class DafnyPrinter:
     def _print_val(self, d: ValDecl):
         params_str = ', '.join(f"{p.name}: {self._type(p.typ)}" for p in d.params)
         ens = self._expr(d.contract.ensures) if d.contract.ensures is not None else None
-        if d.return_type:
+        # `-> Lemma` is an effect marker, not a real return type: emit a Dafny
+        # `lemma` (a proof obligation). A bodyless lemma is an assumed axiom; the
+        # proof body is filled in later (the #TODO / agent-fill path).
+        is_lemma = d.return_type is not None and self._type(d.return_type) == 'Lemma'
+        if is_lemma:
+            self._line(f"lemma {d.name}({params_str})")
+        elif d.return_type:
             ret = self._named_return(self._type(d.return_type), ens)
             self._line(f"function {d.name}({params_str}): {ret}")
         else:
