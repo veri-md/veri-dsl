@@ -70,5 +70,39 @@ class TestLemmaPrint(unittest.TestCase):
         self.assertIn("decreases n", out)
 
 
+class TestQuantifierBinderType(unittest.TestCase):
+    """A quantifier whose bound-variable type can't be resolved (match-bound set,
+    or a forward-referenced type the printer hasn't seen yet) must NOT emit
+    `forall t: _ ::` — `_` is an undeclared type name in Dafny, in every
+    declaration order. Drop the annotation and let Dafny infer it from the range.
+    Regression for limitations.md #1 and #5.
+    """
+
+    def test_match_bound_set_emits_annotation_free_quantifier(self):
+        veri = (
+            "module Test\n"
+            "variant Claim:\n"
+            "    | GrantName(endorser: Imid, target_imids: set[Imid], name: Name)\n"
+            "def fires(c: Claim, result: set[NameImid]) -> bool:\n"
+            "    return match c:\n"
+            "        case GrantName(endorser, tis, name):\n"
+            "            FORALL t IN tis: NameImid(name, t) in result\n"
+        )
+        out = dafny(veri)
+        self.assertNotIn(": _", out)
+        self.assertNotIn("forall t: _", out)
+        self.assertIn("forall t :: t in tis", out)
+
+    def test_resolvable_binder_still_annotated(self):
+        """When the type IS resolvable (typed parameter), keep the annotation."""
+        veri = (
+            "module Test\n"
+            "def fires_set(tis: set[Imid], name: Name, result: set[NameImid]) -> bool:\n"
+            "    return FORALL t IN tis: NameImid(name, t) in result\n"
+        )
+        out = dafny(veri)
+        self.assertIn("forall t: Imid :: t in tis", out)
+
+
 if __name__ == "__main__":
     unittest.main()

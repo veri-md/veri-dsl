@@ -245,6 +245,19 @@ class DafnyPrinter:
             self.indent -= 1
             self._line("}")
 
+    def _quant_binders(self, binders) -> str:
+        # Print a quantifier's bound variables. When a binder's type could not be
+        # resolved the parser leaves it as the sentinel TypeVar('_'), which prints
+        # as the literal `_` — invalid Dafny in any declaration order. Drop the
+        # annotation in that case and let Dafny infer the type from the range
+        # (e.g. `forall t :: t in s ==> ...`), which it resolves correctly even
+        # for forward-referenced types. See limitations.md #1 and #5.
+        parts = []
+        for b in binders:
+            t = self._type(b.typ)
+            parts.append(b.name if t == '_' else f"{b.name}: {t}")
+        return ', '.join(parts)
+
     def _type(self, typ: TypeExpr) -> str:
         if isinstance(typ, PrimType):
             return _to_dafny_type(typ.name)
@@ -384,11 +397,11 @@ class DafnyPrinter:
             cases_str = '\n' + indent1 + ('\n' + indent1).join(cases_lines)
             return f"match {self._expr(expr.expr)} {{{cases_str}\n{'    ' * self.indent}}}"
         if isinstance(expr, Forall):
-            binders = ', '.join(f"{b.name}: {self._type(b.typ)}" for b in expr.binders)
+            binders = self._quant_binders(expr.binders)
             body = self._expr(expr.body)
             return f"(forall {binders} :: {body})"
         if isinstance(expr, Exists):
-            binders = ', '.join(f"{b.name}: {self._type(b.typ)}" for b in expr.binders)
+            binders = self._quant_binders(expr.binders)
             body = self._expr(expr.body)
             return f"(exists {binders} :: {body})"
         if isinstance(expr, Lambda):
