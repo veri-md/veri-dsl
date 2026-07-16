@@ -617,19 +617,25 @@ class VeriDslParser:
 
     def _parse_addition(self) -> Expr:
         left = self._parse_multiplication()
-        for op in ['PLUS', 'MINUS']:
-            if self._skip(op):
-                right = self._parse_multiplication()
-                left = BinOp('+' if op == 'PLUS' else '-', left, right)
-        return left
+        while True:
+            if self._skip('PLUS'):
+                left = BinOp('+', left, self._parse_multiplication())
+            elif self._skip('MINUS'):
+                left = BinOp('-', left, self._parse_multiplication())
+            else:
+                return left
 
     def _parse_multiplication(self) -> Expr:
         left = self._parse_unary()
-        for op in ['STAR', 'SLASH', 'PERCENT']:
-            if self._skip(op):
-                right = self._parse_unary()
-                left = BinOp('*' if op == 'STAR' else '/' if op == 'SLASH' else '%', left, right)
-        return left
+        while True:
+            if self._skip('STAR'):
+                left = BinOp('*', left, self._parse_unary())
+            elif self._skip('SLASH'):
+                left = BinOp('/', left, self._parse_unary())
+            elif self._skip('PERCENT'):
+                left = BinOp('%', left, self._parse_unary())
+            else:
+                return left
 
     def _parse_unary(self) -> Expr:
         if self._skip('MINUS'):
